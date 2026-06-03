@@ -2,9 +2,11 @@
 Pramo-ao — API principal
 FastAPI + rotas REST para produtos, preços, alertas e ofertas.
 """
-from fastapi import FastAPI, HTTPException, Query
+import os
+from fastapi import FastAPI, HTTPException, Query, Depends, Security
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
+from fastapi.security.api_key import APIKeyHeader
 from typing import List, Optional
 from pydantic import BaseModel
 from app.models import Oferta, Categoria
@@ -20,12 +22,29 @@ app = FastAPI(
     version="1.0.0",
 )
 
+# CORS: origens explícitas lidas do .env (fallback seguro para dev local)
+_cors_origins = [
+    o.strip()
+    for o in os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:8000").split(",")
+    if o.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,
     allow_methods=["GET", "POST"],
-    allow_headers=["*"],
+    allow_headers=["Content-Type", "X-API-Key"],
 )
+
+# Auth para endpoints sensíveis
+_api_key_header = APIKeyHeader(name="X-API-Key", auto_error=True)
+_ALERT_API_KEY = os.getenv("ALERT_API_KEY", "")
+
+
+async def _verificar_api_key(key: str = Security(_api_key_header)) -> str:
+    if not _ALERT_API_KEY or key != _ALERT_API_KEY:
+        raise HTTPException(status_code=403, detail="API key inválida.")
+    return key
 
 
 # ──────────────────────────────────────────────
@@ -70,9 +89,7 @@ async def health():
 
 @app.post("/api/products/search", response_model=List[OfertaComScore])
 async def buscar_produtos(req: BuscaRequest):
-    """
-    Busca produtos em múltiplas lojas e retorna com score ICO.
-    """
+    """Busca produtos em múltiplas lojas e retorna com score ICO."""
     scrapers = []
     if "mercadolivre" in req.fontes:
         scrapers.append(MercadoLivreScraper())
@@ -82,7 +99,6 @@ async def buscar_produtos(req: BuscaRequest):
     if not scrapers:
         raise HTTPException(400, "Nenhuma fonte válida informada.")
 
-    # Coleta paralela
     tarefas = [s.buscar(req.termo) for s in scrapers]
     resultados_raw = await asyncio.gather(*tarefas, return_exceptions=True)
 
@@ -91,24 +107,23 @@ async def buscar_produtos(req: BuscaRequest):
         if isinstance(r, list):
             todas.extend(r)
 
-    # Calcular score ICO para cada oferta
     com_score = []
     for oferta in todas:
         resultado = calcular_score(
             preco_atual=oferta.preco_atual,
             desconto_pct=oferta.desconto_pct,
-            historico_precos=[],   # Fase 2: virá do banco
+            historico_precos=[],
             loja=oferta.loja,
             score_minimo_alerta=req.score_minimo,
         )
-        oferta.score_ico = resultado.score
+        # model_copy cria nova instância imutável com score_ico atualizado (Pydantic v2)
+        oferta_atualizada = oferta.model_copy(update={"score_ico": resultado.score})
         com_score.append(OfertaComScore(
-            oferta=oferta,
+            oferta=oferta_atualizada,
             score=resultado.score,
             classificacao=resultado.classificacao,
         ))
 
-    # Ordenar por score decrescente
     com_score.sort(key=lambda x: x.score, reverse=True)
     return com_score
 
@@ -119,9 +134,7 @@ async def top_deals(
     score_minimo: float = Query(default=60.0, ge=0, le=100),
     limite: int = Query(default=20, ge=1, le=100),
 ):
-    """
-    Retorna as melhores ofertas do momento (score ICO acima do mínimo).
-    """
+    """Retorna as melhores ofertas do momento (score ICO acima do mínimo)."""
     termos = {
         Categoria.ELETRONICOS: ["smartphone", "notebook", "tv samsung"],
         Categoria.SEGURANCA: ["camera ip", "nvr hikvision", "switch poe"],
@@ -131,7 +144,7 @@ async def top_deals(
     lista_termos = termos.get(categoria_busca, ["smartphone"])
 
     todas: List[OfertaComScore] = []
-    for termo in lista_termos[:2]:  # limitar para não sobrecarregar
+    for termo in lista_termos[:2]:
         req = BuscaRequest(termo=termo, score_minimo=score_minimo)
         resultado = await buscar_produtos(req)
         todas.extend(resultado)
@@ -142,8 +155,12 @@ async def top_deals(
 
 
 @app.post("/api/alerts/send")
-async def enviar_alerta_manual(oferta: Oferta, score: float = 80.0):
-    """Envia alerta manual via Telegram."""
+async def enviar_alerta_manual(
+    oferta: Oferta,
+    score: float = 80.0,
+    _key: str = Depends(_verificar_api_key),
+):
+    """Envia alerta manual via Telegram. Requer header X-API-Key."""
     sucesso = await enviar_alerta(oferta, score)
     if not sucesso:
         raise HTTPException(500, "Falha ao enviar alerta. Verifique TELEGRAM_BOT_TOKEN e TELEGRAM_CHAT_ID.")

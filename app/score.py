@@ -53,19 +53,12 @@ def calcular_score(
     loja: str,
     score_minimo_alerta: float = 75.0,
 ) -> ResultadoScore:
-    """
-    Calcula o score ICO para uma oferta.
-
-    Args:
-        preco_atual: preço atual do produto
-        desconto_pct: percentual de desconto anunciado (0-100)
-        historico_precos: lista de preços coletados nos últimos 90 dias
-        loja: nome da loja (usado para peso de confiabilidade)
-        score_minimo_alerta: threshold para gerar alerta (padrão 75)
-    """
-
     # Componente 1: desconto percentual (0-100 → 0-30)
-    desc = min(desconto_pct or 0, 100)
+    # Normaliza fração decimal (0.0-1.0) para percentual (0-100)
+    desc_raw = desconto_pct or 0
+    if 0 < desc_raw <= 1.0:
+        desc_raw = desc_raw * 100
+    desc = min(desc_raw, 100)
     comp_desconto = desc * 0.30
 
     # Componente 2: posição em relação ao mínimo histórico (0-35)
@@ -73,8 +66,13 @@ def calcular_score(
         minimo = min(historico_precos)
         media = sum(historico_precos) / len(historico_precos)
         if media > 0:
-            # Quanto mais próximo do mínimo histórico, maior o score
-            ratio = 1 - (preco_atual - minimo) / media
+            intervalo = media - minimo
+            if intervalo > 0:
+                # ratio = 1 quando preco == minimo (ótimo), 0 quando preco == media
+                ratio = 1 - (preco_atual - minimo) / intervalo
+            else:
+                # todos os preços históricos são iguais
+                ratio = 1.0 if preco_atual <= minimo else 0.0
             comp_historico = max(0, min(ratio, 1)) * 35
         else:
             comp_historico = 0

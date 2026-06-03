@@ -1,13 +1,21 @@
 """
-Módulo de alertas via Telegram.
+Módulo de alertas via Telegram (MarkdownV2).
 Requer TELEGRAM_BOT_TOKEN e TELEGRAM_CHAT_ID no .env.
 """
 import os
+import re
 import httpx
 from app.models import Oferta
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+
+# Caracteres especiais que devem ser escapados no MarkdownV2
+_MDV2_CHARS = r"_[]()~`>#+-=|{}.!"
+
+
+def _escapar_mdv2(texto: str) -> str:
+    return re.sub(r"([" + re.escape(_MDV2_CHARS) + r"])", r"\\\1", str(texto))
 
 
 async def enviar_alerta(oferta: Oferta, score: float) -> bool:
@@ -15,24 +23,29 @@ async def enviar_alerta(oferta: Oferta, score: float) -> bool:
         return False
 
     emoji = "🔥" if score >= 80 else "✅"
+    preco_fmt = _escapar_mdv2(f"{oferta.preco_atual:,.2f}")
+    titulo = _escapar_mdv2(oferta.titulo)
+    loja = _escapar_mdv2(oferta.loja)
+    score_fmt = _escapar_mdv2(f"{score:.0f}")
+
     linhas = [
-        f"{emoji} *{oferta.titulo}*",
-        f"💰 R$ {oferta.preco_atual:,.2f}",
+        f"{emoji} *{titulo}*",
+        f"💰 R$ {preco_fmt}",
     ]
     if oferta.desconto_pct:
-        linhas[1] += f" (-{oferta.desconto_pct:.0f}%)"
+        linhas[1] += f" \\(\\-{_escapar_mdv2(f'{oferta.desconto_pct:.0f}')}%\\)"
     if oferta.preco_original:
-        linhas.append(f"~~De R$ {oferta.preco_original:,.2f}~~")
+        linhas.append(f"~De R$ {_escapar_mdv2(f'{oferta.preco_original:,.2f}')}~")
     linhas += [
-        f"📊 Score ICO: *{score:.0f}/100*",
-        f"🏪 {oferta.loja}",
+        f"📊 Score ICO: *{score_fmt}/100*",
+        f"🏪 {loja}",
         f"🔗 [Ver oferta]({oferta.url})",
     ]
 
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
         "text": "\n".join(linhas),
-        "parse_mode": "Markdown",
+        "parse_mode": "MarkdownV2",
         "disable_web_page_preview": False,
     }
 

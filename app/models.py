@@ -16,7 +16,7 @@ class Oferta(BaseModel):
     preco_original: Optional[float] = None
     desconto_pct: Optional[float] = None
     loja: str
-    url: str
+    url: HttpUrl  # valida esquema http/https e bloqueia URLs inválidas
     imagem: Optional[str] = None
     categoria: Categoria
     score_ico: Optional[float] = None

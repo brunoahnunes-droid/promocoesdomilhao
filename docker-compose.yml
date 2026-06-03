@@ -1,5 +1,9 @@
 version: "3.9"
 
+networks:
+  internal:
+    driver: bridge
+
 services:
   api:
     build: .
@@ -13,6 +17,9 @@ services:
         condition: service_healthy
     volumes:
       - .:/app
+    networks:
+      - internal
+    # Produção: trocar --reload por --workers 4
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     restart: unless-stopped
 
@@ -26,7 +33,9 @@ services:
         condition: service_healthy
     volumes:
       - .:/app
-    command: celery -A app.worker.celery_app worker --loglevel=info
+    networks:
+      - internal
+    command: celery -A app.worker.celery_app worker --loglevel=info --pool=prefork
     restart: unless-stopped
 
   beat:
@@ -36,19 +45,28 @@ services:
       - worker
     volumes:
       - .:/app
+    networks:
+      - internal
     command: celery -A app.worker.celery_app beat --loglevel=info
     restart: unless-stopped
+    deploy:
+      replicas: 1  # nunca escalar beat — evita execução duplicada de tarefas
 
   flower:
     build: .
     env_file: .env
     ports:
-      - "5555:5555"
+      - "127.0.0.1:5555:5555"  # exposto apenas no loopback — não acessível de fora
     depends_on:
       - worker
     volumes:
       - .:/app
-    command: celery -A app.worker.celery_app flower --port=5555
+    networks:
+      - internal
+    command: >
+      celery -A app.worker.celery_app flower
+      --port=5555
+      --basic_auth=${FLOWER_USER:-admin}:${FLOWER_PASSWORD:-CHANGE_ME}
     restart: unless-stopped
 
   postgres:
@@ -56,10 +74,11 @@ services:
     restart: always
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-pramo}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pramo123}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-CHANGE_ME}
       POSTGRES_DB: ${POSTGRES_DB:-pramoao}
-    ports:
-      - "5432:5432"
+    # Porta NÃO exposta ao host — acessível apenas pela rede interna Docker
+    networks:
+      - internal
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -71,12 +90,14 @@ services:
   redis:
     image: redis:7-alpine
     restart: always
-    ports:
-      - "6379:6379"
+    # Porta NÃO exposta ao host
+    networks:
+      - internal
     volumes:
       - redis_data:/data
+    command: redis-server --requirepass ${REDIS_PASSWORD:-CHANGE_ME}
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-CHANGE_ME}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
