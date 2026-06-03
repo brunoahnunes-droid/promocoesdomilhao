@@ -79,14 +79,13 @@ def calcular_score(
         else:
             comp_historico = 0
     else:
-        comp_historico = 17.5  # neutro se sem histórico
+        comp_historico = 17.5  # neutro enquanto histórico não é coletado (Fase 1)
 
     # Componente 3: confiabilidade da loja (0-20)
     confiabilidade = LOJAS_CONFIAVEIS.get(loja, 0.75)
     comp_loja = confiabilidade * 20
 
-    # Componente 4: tendência (simplificada nesta fase — sempre neutra)
-    # Na Fase 2 será calculada via regressão linear do histórico
+    # Componente 4: tendência — neutro na Fase 1, regressão linear na Fase 2
     comp_tendencia = 7.5
 
     score = comp_desconto + comp_historico + comp_loja + comp_tendencia

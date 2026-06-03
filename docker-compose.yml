@@ -7,11 +7,49 @@ services:
       - "8000:8000"
     env_file: .env
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     volumes:
       - .:/app
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    restart: unless-stopped
+
+  worker:
+    build: .
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - .:/app
+    command: celery -A app.worker.celery_app worker --loglevel=info
+    restart: unless-stopped
+
+  beat:
+    build: .
+    env_file: .env
+    depends_on:
+      - worker
+    volumes:
+      - .:/app
+    command: celery -A app.worker.celery_app beat --loglevel=info
+    restart: unless-stopped
+
+  flower:
+    build: .
+    env_file: .env
+    ports:
+      - "5555:5555"
+    depends_on:
+      - worker
+    volumes:
+      - .:/app
+    command: celery -A app.worker.celery_app flower --port=5555
+    restart: unless-stopped
 
   postgres:
     image: postgres:16-alpine
@@ -24,6 +62,11 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pramo}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   redis:
     image: redis:7-alpine
@@ -32,6 +75,11 @@ services:
       - "6379:6379"
     volumes:
       - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 volumes:
   postgres_data:

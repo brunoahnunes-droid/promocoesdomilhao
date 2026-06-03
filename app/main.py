@@ -4,7 +4,6 @@ FastAPI + rotas REST para produtos, preços, alertas e ofertas.
 """
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
 from typing import List, Optional
 from pydantic import BaseModel
@@ -24,7 +23,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_methods=["*"],
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
@@ -123,7 +122,6 @@ async def top_deals(
     """
     Retorna as melhores ofertas do momento (score ICO acima do mínimo).
     """
-    # Termos padrão por categoria para demonstração
     termos = {
         Categoria.ELETRONICOS: ["smartphone", "notebook", "tv samsung"],
         Categoria.SEGURANCA: ["camera ip", "nvr hikvision", "switch poe"],

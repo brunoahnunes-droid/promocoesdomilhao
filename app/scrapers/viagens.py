@@ -9,7 +9,6 @@ Por ora implementa coleta via SerpAPI (requer SERPAPI_KEY no .env).
 """
 import os
 from typing import List
-from datetime import datetime
 import httpx
 from app.models import Oferta, Categoria
 
