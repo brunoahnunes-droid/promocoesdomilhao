@@ -1,71 +1,73 @@
+"""
+Scraper do KaBuM via API interna JSON (catalog/v2/products).
+Não requer autenticação — descoberta por análise da SPA.
+"""
+import httpx
 from typing import List
 from app.models import Oferta, Categoria
-from app.scrapers.base import BaseScraper
+
+_KABUM_API = "https://servicespub.prod.api.aws.grupokabum.com.br/catalog/v2/products"
+_KABUM_BASE = "https://www.kabum.com.br/produto"
+
+_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    "Accept": "application/json",
+    "Origin": "https://www.kabum.com.br",
+    "Referer": "https://www.kabum.com.br/",
+}
 
 
-class KabumScraper(BaseScraper):
+class KabumScraper:
     nome = "KaBuM!"
-    url_base = "https://www.kabum.com.br/busca"
 
     async def buscar(self, termo: str) -> List[Oferta]:
-        slug = termo.replace(" ", "%20")
-        url = f"{self.url_base}/{slug}"
-        soup = await self._get_soup(url)
-        resultados = []
+        resultados: List[Oferta] = []
 
-        for item in soup.select("article.productCard")[:12]:
+        async with httpx.AsyncClient(timeout=20, headers=_HEADERS, follow_redirects=True) as client:
+            resp = await client.get(
+                _KABUM_API,
+                params={
+                    "page": 1,
+                    "page_size": 20,
+                    "smarthint-channel": "search",
+                    "smarthint-query": termo,
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+        for item in data.get("data", []):
             try:
-                titulo_el = item.select_one("span.nameCard")
-                if not titulo_el:
+                attrs = item.get("attributes", {})
+                if not attrs.get("available", False):
                     continue
 
-                preco_el = item.select_one("span.priceCard")
-                if not preco_el:
+                preco_atual = float(attrs.get("price") or 0)
+                if preco_atual <= 0:
                     continue
 
-                preco_txt = (
-                    preco_el.text.strip()
-                    .replace("R$", "")
-                    .replace(".", "")
-                    .replace(",", ".")
-                    .strip()
-                )
-                preco_atual = float(preco_txt)
+                old_price = float(attrs.get("old_price") or 0)
+                preco_original = old_price if old_price > preco_atual else None
 
-                link_el = item.select_one("a")
-                url_produto = (
-                    f"https://www.kabum.com.br{link_el['href']}" if link_el else ""
-                )
+                desconto = attrs.get("discount_percentage")
+                if desconto:
+                    desconto = float(desconto)
+                elif preco_original:
+                    desconto = round((1 - preco_atual / preco_original) * 100, 1)
 
-                img_el = item.select_one("img")
-                imagem = img_el.get("src") if img_el else None
+                produto_id = item.get("id", "")
+                slug = attrs.get("product_link", "")
+                url_produto = f"{_KABUM_BASE}/{produto_id}/{slug}"
 
-                desconto = None
-                desc_el = item.select_one("span.discountCard")
-                if desc_el:
-                    try:
-                        desconto = float(
-                            desc_el.text.strip().replace("%", "").replace("-", "").strip()
-                        )
-                    except ValueError:
-                        pass
-
-                preco_original = None
-                orig_el = item.select_one("span.oldPriceCard")
-                if orig_el:
-                    try:
-                        preco_original = float(
-                            orig_el.text.strip()
-                            .replace("R$", "")
-                            .replace(".", "")
-                            .replace(",", ".")
-                            .strip()
-                        )
-                    except ValueError:
-                        pass
+                fotos = attrs.get("photos", {})
+                imagem = None
+                if fotos.get("m"):
+                    imagem = fotos["m"][0]
+                elif fotos.get("p"):
+                    imagem = fotos["p"][0]
 
                 resultados.append(Oferta(
-                    titulo=titulo_el.text.strip(),
+                    titulo=attrs["title"],
                     preco_atual=preco_atual,
                     preco_original=preco_original,
                     desconto_pct=desconto,

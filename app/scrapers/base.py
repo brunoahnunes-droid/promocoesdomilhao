@@ -8,7 +8,10 @@ from app.models import Oferta
 
 _DOMINIOS_PERMITIDOS = {
     "lista.mercadolivre.com.br",
+    "www.mercadolivre.com.br",
+    "mercadolivre.com.br",
     "www.kabum.com.br",
+    "kabum.com.br",
     "serpapi.com",
 }
 
@@ -41,11 +44,14 @@ class BaseScraper(ABC):
         async with httpx.AsyncClient(
             timeout=25,
             headers=self.HEADERS,
-            follow_redirects=False,  # evita SSRF via redirect
+            follow_redirects=True,  # ML e KaBuM fazem redirect — necessário
         ) as client:
             resp = await client.get(url)
+            # Valida domínio final após redirects (proteção SSRF mantida)
+            final_host = urllib.parse.urlparse(str(resp.url)).hostname or ""
+            if final_host not in _DOMINIOS_PERMITIDOS:
+                raise ValueError(f"Redirect para domínio não permitido: {final_host}")
             resp.raise_for_status()
-            # BS4 instanciado dentro do bloco para garantir resp.text disponível
             return BeautifulSoup(resp.text, "html.parser")
 
     @abstractmethod
